@@ -1,4 +1,5 @@
 import io
+import threading
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -15,6 +16,8 @@ TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 SUPPORTED_SUFFIXES = (".pdf",) + TEXT_SUFFIXES
 
 _embeddings: HuggingFaceEmbeddings | None = None
+_vector_store: Chroma | None = None
+_lock = threading.Lock()
 
 
 class DocumentError(RuntimeError):
@@ -22,31 +25,39 @@ class DocumentError(RuntimeError):
 
 
 def get_embeddings() -> HuggingFaceEmbeddings:
-    """Cached — loading BGE-M3 costs several seconds and ~2 GB, so do it once."""
+    """Cached — loading embeddings uses a thread-safe lock to prevent duplicate loads."""
     global _embeddings
     if _embeddings is None:
-        # BGE models are trained/evaluated with cosine similarity on normalized
-        # embeddings; Chroma's default distance metric assumes that too.
-        _embeddings = HuggingFaceEmbeddings(
-            model_name=config.EMBEDDING_MODEL,
-            encode_kwargs={"normalize_embeddings": True},
-        )
+        with _lock:
+            if _embeddings is None:
+                _embeddings = HuggingFaceEmbeddings(
+                    model_name=config.EMBEDDING_MODEL,
+                    encode_kwargs={"normalize_embeddings": True},
+                )
     return _embeddings
 
 
 def get_vector_store() -> Chroma:
-    return Chroma(
-        collection_name=COLLECTION,
-        persist_directory=config.CHROMA_DIR,
-        embedding_function=get_embeddings(),
-    )
+    """Cached singleton Chroma client."""
+    global _vector_store
+    if _vector_store is None:
+        with _lock:
+            if _vector_store is None:
+                _vector_store = Chroma(
+                    collection_name=COLLECTION,
+                    persist_directory=config.CHROMA_DIR,
+                    embedding_function=get_embeddings(),
+                )
+    return _vector_store
 
 
 def clear_collection() -> None:
+    global _vector_store
     try:
         get_vector_store().delete_collection()
     except Exception:
         pass  # collection may not exist yet
+    _vector_store = None
 
 
 def _extract_pdf(data: bytes, filename: str) -> str:

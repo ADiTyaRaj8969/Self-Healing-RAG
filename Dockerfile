@@ -9,13 +9,14 @@ RUN npm run build
 # ---- Stage 2: Python Application ----
 FROM python:3.11-slim
 
-# Set environment variables for memory efficiency and port flexibility
+# Set environment variables for memory efficiency, persistent cache, and port binding
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     OMP_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
     PORT=10000 \
-    HOME=/home/user
+    HOME=/home/user \
+    HF_HOME=/home/user/.cache/huggingface
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,6 +35,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the embedding model into the container image cache at build time
+RUN python -c "from langchain_huggingface import HuggingFaceEmbeddings; HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')"
+
 # Copy backend code and sample files
 COPY rag/ ./rag/
 COPY server.py main.py sample_handbook.md ./
@@ -41,7 +45,7 @@ COPY server.py main.py sample_handbook.md ./
 # Copy built frontend assets
 COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 
-# Ensure user 1000 has write access to runtime directories
+# Ensure user 1000 has ownership of the app directory and cached model
 RUN mkdir -p /home/user/app/chroma_db /home/user/.cache && \
     chown -R user:user /home/user
 
