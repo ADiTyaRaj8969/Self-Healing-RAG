@@ -1,3 +1,13 @@
+---
+title: Self-Healing RAG
+emoji: 🩺
+colorFrom: purple
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Self-Healing RAG
 
 A retrieval-augmented generation pipeline that doesn't just retrieve-and-generate — it
@@ -161,3 +171,28 @@ frontend/        React + TypeScript + Vite UI
                    AttemptCard, ChunkList, FinalAnswer
 tests/test_graph.py
 ```
+
+## Deploy to Hugging Face Spaces
+
+This repository is pre-configured with a multi-stage `Dockerfile` and HF Spaces metadata for 1-click or Git deployment:
+
+### 1. Create a New Space
+1. Go to [Hugging Face Spaces](https://huggingface.co/new-space).
+2. Set Space name (e.g. `self-healing-rag`).
+3. Select **Docker** as the Space SDK (Blank).
+4. Choose **Public** or **Private**.
+
+### 2. Configure Secrets
+In your Space's **Settings > Variables and secrets > New secret**:
+- Add `GROQ_API_KEY` = your Groq API key (free from [Groq Console](https://console.groq.com/keys))
+- *(Optional)* Add `ANTHROPIC_API_KEY` if using Claude (`LLM_PROVIDER=anthropic`).
+
+### 3. Push to Hugging Face Space
+Clone or add your Space as a git remote from your local repository:
+
+```bash
+git remote add space https://huggingface.co/spaces/<YOUR_HF_USERNAME>/<YOUR_SPACE_NAME>
+git push space main
+```
+
+Alternatively, connect your GitHub repository directly in Space Settings to automatically build and deploy on every commit!

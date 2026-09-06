@@ -4,6 +4,8 @@ The graph needs only two things from a provider: a chat model whose response has
 `.content`, and one that can emit a `CriticVerdict` through structured output.
 Everything else — retrieval, prompts, routing — is provider-agnostic.
 """
+import os
+
 from . import config
 from .schemas import CriticVerdict
 
@@ -17,18 +19,18 @@ class MissingCredentialsError(RuntimeError):
 
 
 def validate_credentials() -> None:
-    provider = config.LLM_PROVIDER
+    provider = os.getenv("LLM_PROVIDER", config.LLM_PROVIDER).strip().lower()
     if provider not in SUPPORTED_PROVIDERS:
         raise MissingCredentialsError(
             f"Unknown LLM_PROVIDER={provider!r}. Supported: {', '.join(SUPPORTED_PROVIDERS)}."
         )
 
-    key = config.GROQ_API_KEY if provider == "groq" else config.ANTHROPIC_API_KEY
+    key = (os.getenv("GROQ_API_KEY") or config.GROQ_API_KEY) if provider == "groq" else (os.getenv("ANTHROPIC_API_KEY") or config.ANTHROPIC_API_KEY)
     if not key:
         env_var = _KEY_ENV_VAR[provider]
         raise MissingCredentialsError(
             f"{env_var} is not set, but LLM_PROVIDER={provider}. "
-            f"Add {env_var} to your .env file (see .env.example)."
+            f"Add {env_var} to your .env file or Space Secrets (see .env.example)."
         )
 
 

@@ -5,12 +5,15 @@ finishes, so the frontend can render the retrieve/generate/critique loop as it r
 rather than waiting for a final answer.
 """
 import json
+import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Iterator, List
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rag import config
@@ -41,7 +44,10 @@ def _graph():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    validate_credentials()
+    try:
+        validate_credentials()
+    except Exception as exc:
+        logging.warning(f"Credential validation note at startup: {exc}")
     # Loading BGE-M3 takes several seconds — do it once at startup, not per request.
     get_embeddings()
     yield
@@ -50,11 +56,11 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Self-Healing RAG", lifespan=lifespan)
 
-# The Vite dev server proxies /api, so this only matters if the frontend is
-# served from a different origin.
+# Allow CORS for local dev servers and cloud deployments (like Hugging Face Spaces)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -198,3 +204,9 @@ def health() -> dict:
         "accepts": list(SUPPORTED_SUFFIXES),
         "corpus": collection_stats(),
     }
+
+
+# Serve built React frontend if dist exists (e.g. in Docker or production)
+_dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.isdir(_dist_dir):
+    app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="frontend")
