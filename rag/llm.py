@@ -5,6 +5,7 @@ The graph needs only two things from a provider: a chat model whose response has
 Everything else — retrieval, prompts, routing — is provider-agnostic.
 """
 import os
+import threading
 
 from . import config
 from .schemas import CriticVerdict
@@ -47,10 +48,38 @@ def _build(model: str, temperature: float = 0):
     return ChatAnthropic(model=model, temperature=temperature)
 
 
+# Constructing a chat client measured ~1.2s — more than an actual Groq round trip —
+# and the graph is rebuilt whenever the corpus changes, which would pay that twice
+# every time. The clients are stateless and thread-safe to share, so cache them.
+_clients: dict[tuple[str, str], object] = {}
+_client_lock = threading.Lock()
+
+
+def _cached(kind: str, model: str):
+    key = (kind, model)
+    client = _clients.get(key)
+    if client is None:
+        with _client_lock:
+            client = _clients.get(key)
+            if client is None:
+                client = _build(model)
+                if kind == "critic":
+                    # Routing reads a typed field, so the critic must return a
+                    # CriticVerdict rather than prose.
+                    client = client.with_structured_output(CriticVerdict)
+                _clients[key] = client
+    return client
+
+
+def reset_clients() -> None:
+    """Drop cached clients, e.g. after credentials or model config change."""
+    with _client_lock:
+        _clients.clear()
+
+
 def generator_llm():
-    return _build(config.GENERATION_MODEL)
+    return _cached("generator", config.GENERATION_MODEL)
 
 
 def critic_llm():
-    """The critic must return a CriticVerdict, not prose — routing reads a typed field."""
-    return _build(config.CRITIC_MODEL).with_structured_output(CriticVerdict)
+    return _cached("critic", config.CRITIC_MODEL)

@@ -194,8 +194,9 @@ async def upload(files: List[UploadFile] = File(...)) -> dict:
             print(f"[Upload] Unexpected error for '{name}': {exc}", flush=True)
             results.append({"filename": name, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
-    # Force a rebuild so the next question sees the newly embedded chunks.
-    _runtime.pop("graph", None)
+    # No graph rebuild here: uploading adds documents to the same cached Chroma
+    # object the graph already closes over, so the next query sees them. (Clearing
+    # the corpus *does* replace that object, which is why it still invalidates.)
     stats = await asyncio.to_thread(collection_stats)
     return {"results": results, "corpus": stats}
 
