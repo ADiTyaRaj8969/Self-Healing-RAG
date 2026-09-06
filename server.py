@@ -4,9 +4,11 @@ Each LangGraph node is streamed to the client as a server-sent event the moment 
 finishes, so the frontend can render the retrieve/generate/critique loop as it runs
 rather than waiting for a final answer.
 """
+import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Iterator, List
 
@@ -166,16 +168,25 @@ async def upload(files: List[UploadFile] = File(...)) -> dict:
             continue
 
         try:
-            chunks = add_document(data, name)
+            t0 = time.time()
+            print(f"[Upload] Processing '{name}' ({len(data)} bytes)...", flush=True)
+            # Run CPU-bound text extraction and embedding in a separate thread
+            # so the FastAPI event loop is not blocked
+            chunks = await asyncio.to_thread(add_document, data, name)
+            elapsed = time.time() - t0
+            print(f"[Upload] Added {chunks} chunks for '{name}' in {elapsed:.2f}s", flush=True)
             results.append({"filename": name, "ok": True, "chunks": chunks})
         except DocumentError as exc:
+            print(f"[Upload] DocumentError for '{name}': {exc}", flush=True)
             results.append({"filename": name, "ok": False, "error": str(exc)})
         except Exception as exc:
+            print(f"[Upload] Unexpected error for '{name}': {exc}", flush=True)
             results.append({"filename": name, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
     # Force a rebuild so the next question sees the newly embedded chunks.
     _runtime.pop("graph", None)
-    return {"results": results, "corpus": collection_stats()}
+    stats = await asyncio.to_thread(collection_stats)
+    return {"results": results, "corpus": stats}
 
 
 @app.delete("/api/corpus")
