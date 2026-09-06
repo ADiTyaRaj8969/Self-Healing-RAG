@@ -29,8 +29,12 @@ GENERATION_MODEL = os.getenv("GENERATION_MODEL") or _defaults["generation"]
 # as GENERATION_MODEL, since it has to catch subtler mistakes than it makes.
 CRITIC_MODEL = os.getenv("CRITIC_MODEL") or _defaults["critic"]
 
-# Embedding model via sentence-transformers (default to lightweight all-MiniLM-L6-v2 for cloud free tiers)
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+# Reported by /api/health and shown in the UI. This is informational only: embeddings
+# run through ONNX Runtime (see rag/ingest.py OnnxMiniLMEmbeddings), which is pinned to
+# all-MiniLM-L6-v2, so there is no model to swap via env here. Changing the embedding
+# model means changing that class — and re-embedding any existing corpus, since vectors
+# from different models are not comparable.
+EMBEDDING_MODEL = "all-MiniLM-L6-v2 (onnx)"
 
 CHROMA_DIR = os.getenv("CHROMA_DIR", "chroma_db")
 

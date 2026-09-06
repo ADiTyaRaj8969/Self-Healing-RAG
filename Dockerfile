@@ -1,5 +1,11 @@
 # ---- Stage 1: Build Frontend ----
 FROM node:20-slim AS frontend-builder
+
+# playwright sits in devDependencies (dev-only screenshot tooling) and npm ci
+# installs devDependencies because tsc/vite live there too. Without this flag its
+# postinstall downloads a full Chromium (~150 MB) that the build never uses.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
 WORKDIR /build/frontend
 COPY frontend/package*.json ./
 RUN npm ci || npm install
@@ -27,16 +33,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -u 1000 user
 WORKDIR /home/user/app
 
-# Install CPU-only PyTorch first to prevent downloading huge CUDA libraries (~3 GB)
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining Python dependencies
+# Install Python dependencies. Note there is no torch install here on purpose:
+# embeddings run through ONNX Runtime (bundled with chromadb), because torch alone
+# costs ~190 MB RSS and the full sentence-transformers stack exceeded the 512 MB
+# free-tier limit before serving a single request.
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the embedding model into the container image cache at build time
-RUN python -c "from langchain_huggingface import HuggingFaceEmbeddings; HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2')"
+# Pre-download the ONNX embedding model into the image so the first request
+# doesn't pay for the download (and so a cold start isn't network-dependent).
+RUN python -c "from chromadb.utils import embedding_functions; embedding_functions.ONNXMiniLM_L6_V2()(['warm up'])"
 
 # Copy backend code and sample files
 COPY rag/ ./rag/
@@ -45,7 +52,7 @@ COPY server.py main.py sample_handbook.md ./
 # Copy built frontend assets
 COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 
-# Ensure user 1000 has ownership of the app directory and cached model
+# Ensure user 1000 owns the app directory and every cache the pre-download wrote to
 RUN mkdir -p /home/user/app/chroma_db /home/user/.cache && \
     chown -R user:user /home/user
 

@@ -4,11 +4,15 @@ langchain-anthropic>=0.3.4
 langchain-groq>=0.2.3
 langchain-community>=0.3.14
 langchain-chroma>=0.2.0
-langchain-huggingface>=0.1.2
 langchain-text-splitters>=0.3.4
 langchain-core>=0.3.29
+
+# Embeddings run on ONNX Runtime, which chromadb bundles. Deliberately NOT
+# sentence-transformers / langchain-huggingface: those pull in torch, which costs
+# ~190 MB of resident memory before a model loads and pushes the process past the
+# 512 MB free-tier limit. See rag/ingest.py OnnxMiniLMEmbeddings.
 chromadb>=0.5.23
-sentence-transformers>=3.3.1
+
 pydantic>=2.9.0
 python-dotenv>=1.0.1
 fastapi>=0.115.6

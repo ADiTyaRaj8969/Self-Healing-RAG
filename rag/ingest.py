@@ -1,9 +1,11 @@
 import io
+import math
 import threading
+from typing import List
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
@@ -15,7 +17,7 @@ COLLECTION = "docs"
 TEXT_SUFFIXES = (".txt", ".md", ".markdown")
 SUPPORTED_SUFFIXES = (".pdf",) + TEXT_SUFFIXES
 
-_embeddings: HuggingFaceEmbeddings | None = None
+_embeddings: "OnnxMiniLMEmbeddings | None" = None
 _vector_store: Chroma | None = None
 _lock = threading.Lock()
 
@@ -24,16 +26,44 @@ class DocumentError(RuntimeError):
     """Raised when a file can't be read: unsupported type, encrypted, or no text."""
 
 
-def get_embeddings() -> HuggingFaceEmbeddings:
-    """Cached — loading embeddings uses a thread-safe lock to prevent duplicate loads."""
+class OnnxMiniLMEmbeddings(Embeddings):
+    """all-MiniLM-L6-v2 served through ONNX Runtime rather than torch.
+
+    Measured on this stack, `import torch` alone costs ~190 MB of resident memory
+    before a model is loaded, and sentence-transformers pushes the process past
+    520 MB — which does not fit the 512 MB free tiers this deploys to. ONNX Runtime
+    ships inside chromadb already, so this swaps the backend without adding a
+    dependency and without changing the model or its 384 dimensions.
+
+    Vectors are L2-normalised so that Chroma's distance metric behaves as cosine
+    similarity, matching the previous sentence-transformers configuration.
+    """
+
+    def __init__(self) -> None:
+        from chromadb.utils import embedding_functions
+
+        self._ef = embedding_functions.ONNXMiniLM_L6_V2()
+
+    @staticmethod
+    def _normalise(vector) -> List[float]:
+        values = [float(x) for x in vector]
+        norm = math.sqrt(sum(v * v for v in values))
+        return [v / norm for v in values] if norm else values
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [self._normalise(v) for v in self._ef(texts)]
+
+    def embed_query(self, text: str) -> List[float]:
+        return self.embed_documents([text])[0]
+
+
+def get_embeddings() -> OnnxMiniLMEmbeddings:
+    """Cached — the lock prevents two requests loading the model concurrently."""
     global _embeddings
     if _embeddings is None:
         with _lock:
             if _embeddings is None:
-                _embeddings = HuggingFaceEmbeddings(
-                    model_name=config.EMBEDDING_MODEL,
-                    encode_kwargs={"normalize_embeddings": True},
-                )
+                _embeddings = OnnxMiniLMEmbeddings()
     return _embeddings
 
 

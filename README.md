@@ -39,7 +39,7 @@ as a stateful, cyclic graph (not a linear chain).
       └──────(retry, reformulated query)
 ```
 
-1. **retrieve** — embed the current query (BGE-M3) and pull the top-k chunks from Chroma.
+1. **retrieve** — embed the current query (all-MiniLM-L6-v2) and pull the top-k chunks from Chroma.
 2. **generate** — an LLM answers the question strictly from those chunks.
 3. **critique** — a second LLM call acts as a skeptical fact-checker: is every claim in the
    answer actually traceable to the retrieved chunks (`grounded`), does it invent something
@@ -65,7 +65,10 @@ built on LangGraph rather than a linear chain — plain sequential chains can't 
   (`openai/gpt-oss-120b`, free tier) or **Anthropic** (`claude-opus-5`). The graph,
   prompts, and retrieval are provider-agnostic; only [rag/llm.py](rag/llm.py) knows which
   SDK is in use.
-- **Embeddings**: `BAAI/bge-m3` via `sentence-transformers`, local and offline
+- **Embeddings**: `all-MiniLM-L6-v2` on **ONNX Runtime** (bundled with chromadb), local and
+  offline. Deliberately not `sentence-transformers`: that pulls in torch, which costs ~190 MB
+  of resident memory before a model loads and put the process at ~524 MB — over the 512 MB
+  free-tier limit this deploys to. ONNX serves the same model at a fraction of that.
 - **Vector store**: Chroma, persisted to disk
 
 ## Setup
@@ -82,7 +85,7 @@ cp .env.example .env
 To run on Claude instead, set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` in `.env`.
 No code changes needed.
 
-First run downloads the BGE-M3 model (~2 GB) from HuggingFace.
+First run downloads the ONNX embedding model (~79 MB); the Docker image pre-bakes it.
 
 ## Usage
 
@@ -116,7 +119,7 @@ critic's verdict, and the reformulated query that feeds the next pass.
 The backend ([server.py](server.py)) streams each node as a server-sent event via
 `graph.stream(..., stream_mode="updates")`, so the frontend never waits on a full result.
 
-**Terminal 1 — backend** (loads BGE-M3 once at startup, so give it a few seconds):
+**Terminal 1 — backend** (loads the embedding model once at startup):
 
 ```bash
 ./venv/Scripts/python.exe -m uvicorn server:app --port 8000
