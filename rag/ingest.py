@@ -19,7 +19,12 @@ SUPPORTED_SUFFIXES = (".pdf",) + TEXT_SUFFIXES
 
 _embeddings: "OnnxMiniLMEmbeddings | None" = None
 _vector_store: Chroma | None = None
-_lock = threading.Lock()
+
+# Two locks, not one. get_vector_store() needs the embeddings to construct Chroma, and
+# threading.Lock is not reentrant — guarding both with a single lock deadlocked the very
+# first upload on a cold process (store lock held, then blocking forever on itself).
+_emb_lock = threading.Lock()
+_store_lock = threading.Lock()
 
 
 class DocumentError(RuntimeError):
@@ -58,10 +63,10 @@ class OnnxMiniLMEmbeddings(Embeddings):
 
 
 def get_embeddings() -> OnnxMiniLMEmbeddings:
-    """Cached — the lock prevents two requests loading the model concurrently."""
+    """Cached — the lock stops two concurrent requests loading the model twice."""
     global _embeddings
     if _embeddings is None:
-        with _lock:
+        with _emb_lock:
             if _embeddings is None:
                 _embeddings = OnnxMiniLMEmbeddings()
     return _embeddings
@@ -71,12 +76,15 @@ def get_vector_store() -> Chroma:
     """Cached singleton Chroma client."""
     global _vector_store
     if _vector_store is None:
-        with _lock:
+        # Resolved before taking _store_lock: acquiring one lock while holding another
+        # is what deadlocked here previously.
+        embeddings = get_embeddings()
+        with _store_lock:
             if _vector_store is None:
                 _vector_store = Chroma(
                     collection_name=COLLECTION,
                     persist_directory=config.CHROMA_DIR,
-                    embedding_function=get_embeddings(),
+                    embedding_function=embeddings,
                 )
     return _vector_store
 

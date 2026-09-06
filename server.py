@@ -50,6 +50,17 @@ async def lifespan(_: FastAPI):
         validate_credentials()
     except Exception as exc:
         logging.warning(f"Credential validation note at startup: {exc}")
+
+    # Warm the ONNX model here rather than on the first upload. The weights are baked
+    # into the image, so this is a local load. Non-fatal: if it fails the app still
+    # boots and binds its port, and the first request pays the cost instead.
+    try:
+        t0 = time.time()
+        await asyncio.to_thread(get_embeddings)
+        logging.info(f"Embedding model warm in {time.time() - t0:.2f}s")
+    except Exception as exc:
+        logging.warning(f"Embedding warm-up skipped: {exc}")
+
     yield
     _runtime.clear()
 
