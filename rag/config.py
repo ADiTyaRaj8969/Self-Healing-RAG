@@ -29,8 +29,8 @@ GENERATION_MODEL = os.getenv("GENERATION_MODEL") or _defaults["generation"]
 # as GENERATION_MODEL, since it has to catch subtler mistakes than it makes.
 CRITIC_MODEL = os.getenv("CRITIC_MODEL") or _defaults["critic"]
 
-# Local, offline embedding model (BAAI/bge-m3) via sentence-transformers.
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+# Embedding model via sentence-transformers (default to lightweight all-MiniLM-L6-v2 for cloud free tiers)
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 
 CHROMA_DIR = os.getenv("CHROMA_DIR", "chroma_db")
 

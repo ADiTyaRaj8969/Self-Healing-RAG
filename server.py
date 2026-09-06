@@ -48,8 +48,6 @@ async def lifespan(_: FastAPI):
         validate_credentials()
     except Exception as exc:
         logging.warning(f"Credential validation note at startup: {exc}")
-    # Loading BGE-M3 takes several seconds — do it once at startup, not per request.
-    get_embeddings()
     yield
     _runtime.clear()
 
