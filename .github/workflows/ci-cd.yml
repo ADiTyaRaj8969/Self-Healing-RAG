@@ -1,0 +1,80 @@
+name: CI/CD Pipeline & Deploy to Hugging Face
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Test & Build (CI)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Backend Tests
+        run: |
+          pytest
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies & Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  deploy-to-huggingface:
+    name: Deploy to Hugging Face Space (CD)
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Deploy to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
+          HF_USERNAME: ${{ secrets.HF_USERNAME }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::warning ::HF_TOKEN is not set in GitHub Secrets. Skipping automatic sync to Hugging Face."
+            echo "To enable CD to Hugging Face:"
+            echo "1. Create a Write token at https://huggingface.co/settings/tokens"
+            echo "2. Add it as 'HF_TOKEN' in GitHub Repo Settings -> Secrets and variables -> Actions"
+            echo "3. (Optional) Add 'HF_SPACE' secret (e.g. username/space-name)"
+            exit 0
+          fi
+
+          TARGET_SPACE="$HF_SPACE"
+          if [ -z "$TARGET_SPACE" ]; then
+            USER_NAME="${HF_USERNAME:-${{ github.repository_owner }}}"
+            TARGET_SPACE="$USER_NAME/Self-Healing-RAG"
+          fi
+
+          echo "Syncing repository to Hugging Face Space: $TARGET_SPACE"
+          git push --force https://oauth2:$HF_TOKEN@huggingface.co/spaces/$TARGET_SPACE main
