@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { clearCorpus, fetchHealth, streamAsk } from './api'
+import { fetchHealth, streamAsk } from './api'
 import AttemptCard from './components/AttemptCard'
 import CorpusPanel from './components/CorpusPanel'
 import FinalAnswer from './components/FinalAnswer'
@@ -22,22 +22,22 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const bootedRef = useRef(false)
 
-  // The corpus is per-session: every page load starts empty, so a reload never
-  // leaves documents from a previous session lying around. (StrictMode runs
-  // effects twice in dev — the ref keeps this to a single round trip.)
+  // The corpus now persists for the lifetime of the backend process rather than being
+  // wiped here. Clearing on every page load forced a full re-upload and re-embed after
+  // each refresh — the most expensive thing you can do on a CPU-constrained host.
+  // Documents still disappear when the container is recycled (ephemeral disk), and
+  // "clear all" in the corpus panel remains available.
+  // (StrictMode runs effects twice in dev — the ref keeps this to a single request.)
   useEffect(() => {
     if (bootedRef.current) return
     bootedRef.current = true
 
-    const loadHealth = () =>
-      fetchHealth()
-        .then((h) => {
-          setHealth(h)
-          setCorpus(h.corpus)
-        })
-        .catch(() => setHealth(null))
-
-    clearCorpus().catch(() => {}).finally(loadHealth)
+    fetchHealth()
+      .then((h) => {
+        setHealth(h)
+        setCorpus(h.corpus)
+      })
+      .catch(() => setHealth(null))
   }, [])
 
   useEffect(() => {

@@ -41,7 +41,14 @@ CHROMA_DIR = os.getenv("CHROMA_DIR", "chroma_db")
 # Chunks retrieved per pass. Lower values make retrieval misses — and therefore the
 # self-healing retry — more likely; raise it for large corpora where recall matters more.
 TOP_K = int(os.getenv("TOP_K", "4"))
-MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "3"))
 
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
+# 2 rather than 3: each extra pass costs two LLM round trips, and on a CPU-throttled
+# free tier a refused question ran the full budget every time. Raise it where latency
+# matters less than giving the self-healing loop more chances to recover.
+MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "2"))
+
+# Larger chunks mean proportionally fewer embeddings per upload, which dominates
+# ingest time on constrained hosts (measured ~4.5s per chunk on Render's free tier).
+# The cost is coarser retrieval, since each chunk carries more unrelated text.
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
