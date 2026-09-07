@@ -33,6 +33,11 @@ _vector_store: Chroma | None = None
 _emb_lock = threading.Lock()
 _store_lock = threading.Lock()
 
+# Ingestion is serialised. Embedding peaks around 350 MB for a large document, so two
+# concurrent uploads would exceed a 512 MB container even though each fits alone.
+# Queuing makes a second upload wait; it does not make it fail.
+_ingest_lock = threading.Lock()
+
 
 class DocumentError(RuntimeError):
     """Raised when a file can't be read: unsupported type, encrypted, or no text."""
@@ -86,6 +91,12 @@ class _ThreadPinnedONNXMiniLM(ONNXMiniLM_L6_V2):
         so.intra_op_num_threads = _available_cpus()
         so.inter_op_num_threads = 1
         so.execution_mode = self.ort.ExecutionMode.ORT_SEQUENTIAL
+        # ONNX Runtime's arena allocator grows to the largest batch it has seen and
+        # never returns it to the OS, so RSS stayed ~360 MB above baseline after one
+        # upload. Disabling the arena trades a little speed for memory that is actually
+        # released — necessary to stay inside a 512 MB container.
+        so.enable_cpu_mem_arena = False
+        so.enable_mem_pattern = False
         return self.ort.InferenceSession(
             os.path.join(self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME, "model.onnx"),
             providers=["CPUExecutionProvider"],
@@ -116,7 +127,19 @@ class OnnxMiniLMEmbeddings(Embeddings):
         return [v / norm for v in values] if norm else values
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return [self._normalise(v) for v in self._ef(texts)]
+        """Embed in bounded batches so peak memory doesn't scale with document size.
+
+        Passing every chunk in one call made ONNX allocate activations for the whole
+        batch at once: a 163-chunk document peaked at 739 MB, over the 512 MB limit,
+        and the container was killed mid-upload. Batching keeps the peak flat — the
+        returned vectors themselves are tiny (384 floats each).
+        """
+        out: List[List[float]] = []
+        size = max(1, config.EMBED_BATCH_SIZE)
+        for start in range(0, len(texts), size):
+            for vector in self._ef(texts[start : start + size]):
+                out.append(self._normalise(vector))
+        return out
 
     def embed_query(self, text: str) -> List[float]:
         return self.embed_documents([text])[0]
@@ -214,7 +237,14 @@ def add_document(data: bytes, filename: str) -> int:
         chunk_overlap=config.CHUNK_OVERLAP,
     ).split_documents([Document(page_content=text, metadata={"source": filename})])
 
-    get_vector_store().add_documents(chunks)
+    # Inserted in batches for the same reason embedding is: one add_documents() call
+    # holds every chunk, its vector and its metadata in memory simultaneously.
+    store = get_vector_store()
+    size = max(1, config.EMBED_BATCH_SIZE)
+    with _ingest_lock:
+        for start in range(0, len(chunks), size):
+            store.add_documents(chunks[start : start + size])
+
     return len(chunks)
 
 

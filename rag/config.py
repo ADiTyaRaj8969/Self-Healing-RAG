@@ -52,3 +52,8 @@ MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "2"))
 # The cost is coarser retrieval, since each chunk carries more unrelated text.
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "1200"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
+
+# Chunks embedded per ONNX call, and per Chroma insert. Caps peak memory during
+# upload: without a bound, a large document embeds every chunk in one batch and the
+# activations alone exceeded a 512 MB container. Lower it if uploads still OOM.
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
