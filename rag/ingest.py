@@ -218,6 +218,19 @@ def add_document(data: bytes, filename: str) -> int:
     return len(chunks)
 
 
+def collection_count() -> int:
+    """Just the chunk count, without pulling every row's metadata.
+
+    The /api/ask guard only needs to know whether the corpus is empty. Using
+    collection_stats() for that fetched all metadata on every question, which on a
+    CPU-throttled host cost seconds before the pipeline even started.
+    """
+    try:
+        return get_vector_store()._collection.count()
+    except Exception:
+        return 0
+
+
 def collection_stats() -> dict:
     """Chunk count plus a per-source breakdown, for the corpus panel."""
     try:

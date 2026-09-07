@@ -25,6 +25,7 @@ from rag.ingest import (
     DocumentError,
     add_document,
     clear_collection,
+    collection_count,
     collection_stats,
     get_embeddings,
     get_vector_store,
@@ -44,6 +45,14 @@ def _graph():
     return _runtime["graph"]
 
 
+def _warm_llm_clients() -> None:
+    """Build (and cache) the chat clients so the first question doesn't pay for it."""
+    from rag.llm import critic_llm, generator_llm
+
+    generator_llm()
+    critic_llm()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
@@ -60,6 +69,15 @@ async def lifespan(_: FastAPI):
         logging.info(f"Embedding model warm in {time.time() - t0:.2f}s")
     except Exception as exc:
         logging.warning(f"Embedding warm-up skipped: {exc}")
+
+    # Same reasoning for the chat clients: constructing them measured ~1.2s locally and
+    # several seconds on a throttled host, which the first question would otherwise pay.
+    try:
+        t0 = time.time()
+        await asyncio.to_thread(_warm_llm_clients)
+        logging.info(f"LLM clients warm in {time.time() - t0:.2f}s")
+    except Exception as exc:
+        logging.warning(f"LLM warm-up skipped: {exc}")
 
     yield
     _runtime.clear()
@@ -146,7 +164,7 @@ def _event_stream(question: str, max_attempts: int) -> Iterator[str]:
 def ask(req: AskRequest) -> StreamingResponse:
     if not req.question.strip():
         raise HTTPException(400, "Question is empty.")
-    if collection_stats()["count"] == 0:
+    if collection_count() == 0:
         raise HTTPException(400, "No documents yet — upload one to build the corpus.")
 
     return StreamingResponse(
