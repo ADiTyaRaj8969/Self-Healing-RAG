@@ -1,7 +1,14 @@
 import io
 import math
+import os
 import threading
+from functools import cached_property
 from typing import List
+
+try:  # module path is internal to chromadb; fall back to the public re-export
+    from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+except ImportError:  # pragma: no cover - depends on chromadb version
+    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -31,6 +38,61 @@ class DocumentError(RuntimeError):
     """Raised when a file can't be read: unsupported type, encrypted, or no text."""
 
 
+def _available_cpus() -> int:
+    """Effective CPUs for this process, honouring container quota.
+
+    os.cpu_count() reports the *host's* cores, so inside a container limited to a
+    fraction of a CPU it over-reports badly (12 on a 0.1-CPU box). ONNX Runtime sizes
+    its thread pool from that number by default, so it spawns a dozen threads to share
+    a tenth of a core and spends most of its time context-switching. Reading the cgroup
+    quota gives the real budget.
+    """
+    for quota_file, period_file in (
+        ("/sys/fs/cgroup/cpu.max", None),  # cgroup v2: "<quota> <period>" or "max <period>"
+        ("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "/sys/fs/cgroup/cpu/cpu.cfs_period_us"),
+    ):
+        try:
+            with open(quota_file) as fh:
+                raw = fh.read().split()
+            if period_file is None:
+                quota, period = raw[0], raw[1]
+            else:
+                quota = raw[0]
+                with open(period_file) as fh:
+                    period = fh.read().strip()
+            if quota in ("max", "-1"):
+                break
+            cpus = float(quota) / float(period)
+            if cpus > 0:
+                return max(1, int(cpus))
+        except (OSError, ValueError, IndexError):
+            continue
+    return max(1, os.cpu_count() or 1)
+
+
+class _ThreadPinnedONNXMiniLM(ONNXMiniLM_L6_V2):
+    """chroma's ONNX embedder with its thread pool sized to the real CPU budget.
+
+    Upstream builds SessionOptions without setting intra_op_num_threads, so ONNX
+    Runtime defaults to one thread per detected core. Everything else here mirrors
+    the parent implementation.
+    """
+
+    @cached_property
+    def model(self):  # type: ignore[override]
+        so = self.ort.SessionOptions()
+        so.log_severity_level = 3
+        so.graph_optimization_level = self.ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        so.intra_op_num_threads = _available_cpus()
+        so.inter_op_num_threads = 1
+        so.execution_mode = self.ort.ExecutionMode.ORT_SEQUENTIAL
+        return self.ort.InferenceSession(
+            os.path.join(self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME, "model.onnx"),
+            providers=["CPUExecutionProvider"],
+            sess_options=so,
+        )
+
+
 class OnnxMiniLMEmbeddings(Embeddings):
     """all-MiniLM-L6-v2 served through ONNX Runtime rather than torch.
 
@@ -45,9 +107,7 @@ class OnnxMiniLMEmbeddings(Embeddings):
     """
 
     def __init__(self) -> None:
-        from chromadb.utils import embedding_functions
-
-        self._ef = embedding_functions.ONNXMiniLM_L6_V2()
+        self._ef = _ThreadPinnedONNXMiniLM()
 
     @staticmethod
     def _normalise(vector) -> List[float]:
